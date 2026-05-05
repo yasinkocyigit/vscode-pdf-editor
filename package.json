@@ -18,8 +18,8 @@
     "annotate",
     "viewer"
   ],
+  "icon": "images/icon.png",
   "main": "./src/extension.js",
-  "activationEvents": [],
   "contributes": {
     "commands": [
       {
