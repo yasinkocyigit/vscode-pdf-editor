@@ -1,0 +1,32 @@
+{
+  "name": "vscode-pdf-editor",
+  "displayName": "PDF Editor",
+  "description": "Secure, lightweight PDF viewer and editor for VS Code. Annotate, highlight, and save important sections directly within your workspace.",
+  "version": "1.0.0",
+  "publisher": "yasin-dev",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "keywords": [
+    "pdf",
+    "editor",
+    "highlight",
+    "annotate",
+    "viewer"
+  ],
+  "main": "./src/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "vscode-pdf-editor.startEditor",
+        "title": "PDF Editor: Start",
+        "category": "PDF Editor"
+      }
+    ]
+  }
+}
