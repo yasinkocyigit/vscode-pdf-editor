@@ -118,7 +118,13 @@ function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
             .textLayer span::-moz-selection { color: transparent !important; background: rgba(0, 120, 255, 0.2) !important; }
 
             body.eraser-mode .textLayer {
-                cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='white' stroke='black' stroke-width='2'%3E%3Cpath d='M20 20H7L3 16C2.5 15.5 2.5 14.5 3 14L13 4C13.5 3.5 14.5 3.5 15 4L20 9C20.5 9.5 20.5 10.5 20 11L11 20H20V20Z'/%3E%3Cpath d='M16 16L10 10'/%3E%3C/svg%3E") 4 20, crosshair !important;
+                cursor: crosshair !important;
+                pointer-events: none;
+            }
+
+            body.pen-mode .textLayer {
+                cursor: crosshair !important;
+                pointer-events: none;
             }
 
             #master-toolbar {
@@ -172,6 +178,12 @@ function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
             .color-dot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; transition: 0.2s; }
             .color-dot.active { border-color: white; transform: scale(1.25); box-shadow: 0 0 5px rgba(255,255,255,0.4); }
 
+            .size-dot { width: 12px; height: 12px; background: #666; border-radius: 50%; border: 2px solid transparent; cursor: pointer; transition: 0.2s; margin: 0 2px; }
+            .size-dot.active { background: white; border-color: #007acc; transform: scale(1.2); }
+            .s-small { width: 8px; height: 8px; }
+            .s-medium { width: 12px; height: 12px; }
+            .s-large { width: 16px; height: 16px; }
+
             .c-yellow { background-color: #ffff00; }
             .c-green { background-color: #00ff00; }
             .c-pink { background-color: #ff00ff; }
@@ -209,6 +221,15 @@ function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
                 <button class="btn" data-tool="eraser" title="Eraser (Select text to erase)">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20H7L3 16C2.5 15.5 2.5 14.5 3 14L13 4C13.5 3.5 14.5 3.5 15 4L20 9C20.5 9.5 20.5 10.5 20 11L11 20H20V20Z"></path><path d="M16 16L10 10"></path></svg>
                 </button>
+                <button class="btn" data-tool="pen" title="Free Draw">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"></path><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path><path d="M2 2l5 5"></path><path d="M11 11l1 1"></path></svg>
+                </button>
+            </div>
+
+            <div class="group">
+                <div class="size-dot s-small" data-size="2" title="Small Pen"></div>
+                <div class="size-dot s-medium active" data-size="4" title="Medium Pen"></div>
+                <div class="size-dot s-large" data-size="8" title="Large Pen"></div>
             </div>
 
             <div class="group">
@@ -245,6 +266,7 @@ function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
 
             let pdfDoc = null; let pdfLibDoc = null; 
             let currentTool = 'highlight'; let currentColor = '#ffff00';
+            let currentPenSize = 4;
             
             let annotationsMap = {}; 
 
@@ -328,10 +350,21 @@ function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
                     document.querySelectorAll('.btn[data-tool]').forEach(x => x.classList.remove('active')); 
                     b.classList.add('active'); 
                     currentTool = b.dataset.tool; 
+                    
+                    document.body.classList.remove('eraser-mode', 'pen-mode');
                     if (currentTool === 'eraser') document.body.classList.add('eraser-mode');
-                    else document.body.classList.remove('eraser-mode');
+                    if (currentTool === 'pen') document.body.classList.add('pen-mode');
                 });
             });
+
+            document.querySelectorAll('.size-dot').forEach(d => {
+                d.addEventListener('click', () => { 
+                    document.querySelectorAll('.size-dot').forEach(x => x.classList.remove('active')); 
+                    d.classList.add('active'); 
+                    currentPenSize = parseInt(d.dataset.size); 
+                });
+            });
+
             document.querySelectorAll('.color-dot').forEach(d => {
                 d.addEventListener('click', () => { document.querySelectorAll('.color-dot').forEach(x => x.classList.remove('active')); d.classList.add('active'); currentColor = d.dataset.color; });
             });
@@ -430,12 +463,110 @@ function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
                 return res;
             }
 
+            let isDrawing = false;
+            let currentPath = [];
+            let lastX, lastY;
+            let drawPageNum = null;
+
+            document.addEventListener('mousedown', (e) => {
+                if (currentTool !== 'pen' && currentTool !== 'eraser') return;
+                const wrapper = e.target.closest('.page-wrapper');
+                if (!wrapper) return;
+
+                isDrawing = true;
+                drawPageNum = parseInt(wrapper.id.replace('page-wrapper-', ''));
+                const rect = wrapper.getBoundingClientRect();
+                lastX = e.clientX - rect.left;
+                lastY = e.clientY - rect.top;
+
+                if (currentTool === 'pen') {
+                    currentPath = [{ x: lastX, y: lastY }];
+                } else if (currentTool === 'eraser') {
+                    handleErasing(drawPageNum, lastX, lastY);
+                }
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!isDrawing || (currentTool !== 'pen' && currentTool !== 'eraser')) return;
+                const wrapper = document.getElementById('page-wrapper-' + drawPageNum);
+                const rect = wrapper.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+
+                if (currentTool === 'pen') {
+                    drawOnCanvas(drawPageNum, lastX, lastY, x, y, currentColor, 'pen', currentPenSize);
+                    currentPath.push({ x, y });
+                } else if (currentTool === 'eraser') {
+                    handleErasing(drawPageNum, x, y);
+                }
+
+                lastX = x;
+                lastY = y;
+            });
+
+            function handleErasing(pageNum, x, y) {
+                let currentAnnos = annotationsMap[pageNum];
+                if (!currentAnnos || currentAnnos.length === 0) return;
+
+                let changed = false;
+                const eraserRadius = 10;
+
+                const nextAnnos = currentAnnos.filter(a => {
+                    let hit = false;
+                    if (a.tool === 'pen') {
+                        hit = a.points.some(p => Math.sqrt((p.x - x) ** 2 + (p.y - y) ** 2) < eraserRadius + (a.size / 2));
+                    } else {
+                        hit = (x >= a.x - eraserRadius && x <= a.x + a.w + eraserRadius &&
+                               y >= a.y - eraserRadius && y <= a.y + a.h + eraserRadius);
+                    }
+                    if (hit) changed = true;
+                    return !hit;
+                });
+
+                if (changed) {
+                    annotationsMap[pageNum] = nextAnnos;
+                    const drawCanvas = document.getElementById('draw-layer-' + pageNum);
+                    const drawCtx = drawCanvas.getContext('2d');
+                    drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+                    
+                    for (const a of nextAnnos) {
+                        if (a.tool === 'pen') {
+                            for (let i = 0; i < a.points.length - 1; i++) {
+                                drawOnCanvas(pageNum, a.points[i].x, a.points[i].y, a.points[i+1].x, a.points[i+1].y, a.color, 'pen', a.size);
+                            }
+                        } else {
+                            drawOnCanvas(pageNum, a.x, a.y, a.w, a.h, a.color, a.tool);
+                        }
+                    }
+                }
+            }
+
             function setupHighlighting() {
                 if (window.isHighlightingSetup) return;
                 window.isHighlightingSetup = true;
 
                 document.addEventListener('mouseup', () => {
                     if (dragging) return;
+
+                    if (isDrawing) {
+                        if (currentTool === 'pen') {
+                            if (currentPath.length > 1) {
+                                annotationsMap[drawPageNum].push({
+                                    tool: 'pen',
+                                    points: currentPath,
+                                    color: currentColor,
+                                    size: currentPenSize
+                                });
+                            }
+                        }
+                        isDrawing = false;
+                        currentPath = [];
+                        drawPageNum = null;
+                        return;
+                    }
+
+                    if (currentTool === 'eraser') return;
+
                     const sel = window.getSelection();
                     if (!sel || sel.isCollapsed) return;
 
@@ -501,60 +632,32 @@ function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
 
                     let hasDeletedSomething = false;
 
-                    if (currentTool === 'eraser') {
-                        let currentAnnos = annotationsMap[pageNum];
-                        let changed = false;
-
-                        for (const E of mergedRects) {
-                            let nextAnnos = [];
-                            for (const A of currentAnnos) {
-                                if (E.x > A.x + A.w || E.x + E.w < A.x || E.y > A.y + A.h || E.y + E.h < A.y) {
-                                    nextAnnos.push(A);
-                                    continue;
-                                }
-
-                                const sub = subtractRect(A, E);
-                                if (sub.length !== 1 || sub[0].x !== A.x || sub[0].w !== A.w || sub[0].y !== A.y || sub[0].h !== A.h) {
-                                    changed = true;
-                                }
-                                nextAnnos.push(...sub);
-                            }
-                            currentAnnos = nextAnnos;
-                        }
-
-                        if (changed) {
-                            annotationsMap[pageNum] = currentAnnos;
-                            hasDeletedSomething = true;
-                        }
-                    } else {
-                        for (const E of mergedRects) {
-                            drawOnCanvas(pageNum, E.x, E.y, E.w, E.h, currentColor, currentTool);
-                            annotationsMap[pageNum].push({ x: E.x, y: E.y, w: E.w, h: E.h, color: currentColor, tool: currentTool });
-                        }
-                    }
-
-                    if (currentTool === 'eraser' && hasDeletedSomething) {
-                        const drawCanvas = document.getElementById('draw-layer-' + pageNum);
-                        const drawCtx = drawCanvas.getContext('2d');
-                        drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
-                        
-                        for (const a of annotationsMap[pageNum]) {
-                            drawOnCanvas(pageNum, a.x, a.y, a.w, a.h, a.color, a.tool);
-                        }
+                    for (const E of mergedRects) {
+                        drawOnCanvas(pageNum, E.x, E.y, E.w, E.h, currentColor, currentTool);
+                        annotationsMap[pageNum].push({ x: E.x, y: E.y, w: E.w, h: E.h, color: currentColor, tool: currentTool });
                     }
 
                     sel.removeAllRanges(); 
                 });
             }
 
-            function drawOnCanvas(pageNum, x, y, w, h, color, tool) {
+            function drawOnCanvas(pageNum, x, y, x2_or_w, y2_or_h, color, tool, size) {
                 const drawCtx = document.getElementById('draw-layer-' + pageNum).getContext('2d');
                 if (tool === 'highlight') {
-                    drawCtx.fillStyle = color; drawCtx.globalAlpha = 0.45; drawCtx.fillRect(x, y, w, h); drawCtx.globalAlpha = 1.0;
+                    drawCtx.fillStyle = color; drawCtx.globalAlpha = 0.45; drawCtx.fillRect(x, y, x2_or_w, y2_or_h); drawCtx.globalAlpha = 1.0;
+                } else if (tool === 'pen') {
+                    drawCtx.strokeStyle = color;
+                    drawCtx.lineWidth = size || 2;
+                    drawCtx.lineCap = 'round';
+                    drawCtx.lineJoin = 'round';
+                    drawCtx.beginPath();
+                    drawCtx.moveTo(x, y);
+                    drawCtx.lineTo(x2_or_w, y2_or_h);
+                    drawCtx.stroke();
                 } else {
                     drawCtx.strokeStyle = color; drawCtx.lineWidth = 2; drawCtx.beginPath();
-                    const lineY = (tool === 'strike') ? y + h / 2 : y + h - 1;
-                    drawCtx.moveTo(x, lineY); drawCtx.lineTo(x + w, lineY); drawCtx.stroke();
+                    const lineY = (tool === 'strike') ? y + y2_or_h / 2 : y + y2_or_h - 1;
+                    drawCtx.moveTo(x, lineY); drawCtx.lineTo(x + x2_or_w, lineY); drawCtx.stroke();
                 }
             }
 
@@ -579,6 +682,18 @@ function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
                             const c = a.color, r = parseInt(c.slice(1,3), 16)/255, g = parseInt(c.slice(3,5), 16)/255, b = parseInt(c.slice(5,7), 16)/255;
                             if (a.tool === 'highlight') {
                                 p.drawRectangle({ x: a.x*sx, y: height-(a.y+a.h)*sy, width: a.w*sx, height: a.h*sy, color: PDFLib.rgb(r,g,b), opacity: 0.5 });
+                            } else if (a.tool === 'pen') {
+                                for (let i = 0; i < a.points.length - 1; i++) {
+                                    const p1 = a.points[i];
+                                    const p2 = a.points[i+1];
+                                    p.drawLine({
+                                        start: { x: p1.x * sx, y: height - p1.y * sy },
+                                        end: { x: p2.x * sx, y: height - p2.y * sy },
+                                        thickness: (a.size || 2) * sx,
+                                        color: PDFLib.rgb(r,g,b),
+                                        opacity: 1
+                                    });
+                                }
                             } else {
                                 const lineY = a.tool === 'strike' ? height-(a.y+a.h/2)*sy : height-(a.y+a.h-1)*sy;
                                 p.drawLine({ start: { x: a.x*sx, y: lineY }, end: { x: (a.x+a.w)*sx, y: lineY }, thickness: 1.5, color: PDFLib.rgb(r,g,b) });
