@@ -36,39 +36,41 @@ function activate(context) {
         const pdfWebviewUrl = panel.webview.asWebviewUri(selectedPdfUri).toString();
 
         const nonce = getNonce();
+        const cspSource = panel.webview.cspSource;
 
-        panel.webview.html = getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce);
+        panel.webview.html = getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce, cspSource);
 
         panel.webview.onDidReceiveMessage(async message => {
             if (!message || typeof message !== 'object') return;
 
             if (message.command === 'saveFile') {
                 if (!message.data) {
-                    vscode.window.showErrorMessage('Failed to receive data!');
+                    vscode.window.showErrorMessage('Failed to receive PDF data from editor.');
                     return;
                 }
-
-                let dataBuffer;
-                if (Buffer.isBuffer(message.data)) {
-                    dataBuffer = message.data;
-                } else if (message.data instanceof Uint8Array || typeof message.data === 'object') {
-                    dataBuffer = Buffer.from(Object.values(message.data));
-                } else {
-                    vscode.window.showErrorMessage('Incompatible data format.');
-                    return;
-                }
-
-                if (dataBuffer.byteLength > 50 * 1024 * 1024) {
-                    vscode.window.showErrorMessage('File too large! Maximum 50MB can be saved.');
-                    return;
-                }
-
-                // Save directly to the original file path
-                const filePath = selectedPdfUri.fsPath;
 
                 try {
+                    let dataBuffer;
+                    if (Array.isArray(message.data)) {
+                        dataBuffer = Buffer.from(message.data);
+                    } else if (typeof message.data === 'object') {
+                        dataBuffer = Buffer.from(Object.values(message.data));
+                    } else {
+                        dataBuffer = Buffer.from(message.data);
+                    }
+
+                    if (dataBuffer.byteLength > 50 * 1024 * 1024) {
+                        vscode.window.showErrorMessage('File too large! Maximum 50MB can be saved.');
+                        return;
+                    }
+
+                    const filePath = selectedPdfUri.fsPath;
                     fs.writeFileSync(filePath, dataBuffer);
+                    
                     vscode.window.showInformationMessage(`Successfully saved: ${path.basename(filePath)}`);
+                    
+                    // Notify webview that save is complete
+                    panel.webview.postMessage({ command: 'saveCompleted', newData: message.data });
                 } catch (err) {
                     vscode.window.showErrorMessage(`Error saving file: ${err.message}`);
                 }
@@ -77,7 +79,7 @@ function activate(context) {
                 panel.webview.postMessage({ command: 'loadPdf', url: pdfWebviewUrl });
             }
             if (message.command === 'error') {
-                vscode.window.showErrorMessage(message.text);
+                vscode.window.showErrorMessage("Editor Error: " + message.text);
             }
         });
     });
@@ -94,13 +96,13 @@ function getNonce() {
     return text;
 }
 
-function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
+function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce, cspSource) {
     return `
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src vscode-webview-resource: blob: data:; script-src 'nonce-${nonce}' vscode-webview-resource:; style-src 'nonce-${nonce}'; img-src data: blob: vscode-webview-resource:;">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src ${cspSource} blob: data:; script-src 'nonce-${nonce}' ${cspSource}; style-src 'nonce-${nonce}' ${cspSource}; img-src data: blob: ${cspSource};">
         <title>PDF Pro Editor</title>
         
         <script nonce="${nonce}" src="${pdfJsUri}"></script>
@@ -118,7 +120,15 @@ function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
             .textLayer span::-moz-selection { color: transparent !important; background: rgba(0, 120, 255, 0.2) !important; }
 
             body.eraser-mode .textLayer {
-                cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='white' stroke='black' stroke-width='2'%3E%3Cpath d='M20 20H7L3 16C2.5 15.5 2.5 14.5 3 14L13 4C13.5 3.5 14.5 3.5 15 4L20 9C20.5 9.5 20.5 10.5 20 11L11 20H20V20Z'/%3E%3Cpath d='M16 16L10 10'/%3E%3C/svg%3E") 4 20, crosshair !important;
+                cursor: crosshair !important;
+            }
+
+            body.eraser-mode .textLayer span::selection { background: rgba(255, 0, 0, 0.3) !important; }
+            body.eraser-mode .textLayer span::-moz-selection { background: rgba(255, 0, 0, 0.3) !important; }
+
+            body.pen-mode .textLayer {
+                cursor: crosshair !important;
+                pointer-events: none;
             }
 
             #master-toolbar {
@@ -172,6 +182,12 @@ function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
             .color-dot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; transition: 0.2s; }
             .color-dot.active { border-color: white; transform: scale(1.25); box-shadow: 0 0 5px rgba(255,255,255,0.4); }
 
+            .size-dot { width: 12px; height: 12px; background: #666; border-radius: 50%; border: 2px solid transparent; cursor: pointer; transition: 0.2s; margin: 0 2px; }
+            .size-dot.active { background: white; border-color: #007acc; transform: scale(1.2); }
+            .s-small { width: 8px; height: 8px; }
+            .s-medium { width: 12px; height: 12px; }
+            .s-large { width: 16px; height: 16px; }
+
             .c-yellow { background-color: #ffff00; }
             .c-green { background-color: #00ff00; }
             .c-pink { background-color: #ff00ff; }
@@ -182,9 +198,9 @@ function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
                 display: flex; flex-direction: column; align-items: center; gap: 20px;
                 padding-top: 80px; padding-bottom: 50px; background: #2d2d2d; min-height: 100vh;
             }
+            .pdf-canvas { display: block; z-index: 2; position: relative; mix-blend-mode: multiply; }
+            .draw-layer { position: absolute; top: 0; left: 0; z-index: 1; pointer-events: none; }
             .page-wrapper { position: relative; box-shadow: 0 0 20px rgba(0,0,0,0.5); background: white; }
-            .pdf-canvas { display: block; z-index: 1; }
-            .draw-layer { position: absolute; top: 0; left: 0; z-index: 2; mix-blend-mode: multiply; pointer-events: none; }
             #loading-msg { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font-size: 16px; z-index: 999; }
         </style>
     </head>
@@ -209,6 +225,15 @@ function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
                 <button class="btn" data-tool="eraser" title="Eraser (Select text to erase)">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20H7L3 16C2.5 15.5 2.5 14.5 3 14L13 4C13.5 3.5 14.5 3.5 15 4L20 9C20.5 9.5 20.5 10.5 20 11L11 20H20V20Z"></path><path d="M16 16L10 10"></path></svg>
                 </button>
+                <button class="btn" data-tool="pen" title="Free Draw">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"></path><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path><path d="M2 2l5 5"></path><path d="M11 11l1 1"></path></svg>
+                </button>
+            </div>
+
+            <div class="group">
+                <div class="size-dot s-small" data-size="2" title="Small Pen"></div>
+                <div class="size-dot s-medium active" data-size="4" title="Medium Pen"></div>
+                <div class="size-dot s-large" data-size="8" title="Large Pen"></div>
             </div>
 
             <div class="group">
@@ -244,7 +269,9 @@ function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
             }
 
             let pdfDoc = null; let pdfLibDoc = null; 
+            let originalArrayBuffer = null;
             let currentTool = 'highlight'; let currentColor = '#ffff00';
+            let currentPenSize = 4;
             
             let annotationsMap = {}; 
 
@@ -328,39 +355,113 @@ function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
                     document.querySelectorAll('.btn[data-tool]').forEach(x => x.classList.remove('active')); 
                     b.classList.add('active'); 
                     currentTool = b.dataset.tool; 
+                    
+                    document.body.classList.remove('eraser-mode', 'pen-mode');
                     if (currentTool === 'eraser') document.body.classList.add('eraser-mode');
-                    else document.body.classList.remove('eraser-mode');
+                    if (currentTool === 'pen') document.body.classList.add('pen-mode');
                 });
             });
+
+            document.querySelectorAll('.size-dot').forEach(d => {
+                d.addEventListener('click', () => { 
+                    document.querySelectorAll('.size-dot').forEach(x => x.classList.remove('active')); 
+                    d.classList.add('active'); 
+                    currentPenSize = parseInt(d.dataset.size); 
+                });
+            });
+
             document.querySelectorAll('.color-dot').forEach(d => {
                 d.addEventListener('click', () => { document.querySelectorAll('.color-dot').forEach(x => x.classList.remove('active')); d.classList.add('active'); currentColor = d.dataset.color; });
             });
 
-            window.addEventListener('message', event => { if (event.data.command === 'loadPdf') loadPdf(event.data.url); });
-            vscode.postMessage({ command: 'ready' });
+            window.addEventListener('message', event => { 
+                if (event.data.command === 'loadPdf') loadPdf(event.data.url); 
+                if (event.data.command === 'saveCompleted') {
+                    // We no longer clear annotationsMap or update originalArrayBuffer here.
+                }
+            });
+
+            window.onload = () => {
+                console.log("Webview loaded, checking libraries...");
+                const Lib = window.PDFLib || (typeof PDFLib !== 'undefined' ? PDFLib : null);
+                if (Lib) {
+                    console.log("PDFLib successfully loaded.");
+                    vscode.postMessage({ command: 'ready' });
+                } else {
+                    console.error("PDFLib failed to load.");
+                    vscode.postMessage({ command: 'error', text: 'PDFLib library failed to load. This may be due to a restrictive Content Security Policy or a missing file.' });
+                    document.getElementById('loading-msg').innerText = 'Error: PDFLib library not found.';
+                }
+            };
 
             async function loadPdf(url) {
                 try {
                     const response = await fetch(url); 
                     const arrayBuffer = await response.arrayBuffer();
-
-                    if (arrayBuffer.byteLength > 50 * 1024 * 1024) {
-                        vscode.postMessage({ command: 'error', text: 'PDF file is too large (Maximum 50MB).' });
-                        return;
+                    
+                    const Lib = window.PDFLib || (typeof PDFLib !== 'undefined' ? PDFLib : null);
+                    if (!Lib) {
+                        throw new Error('PDFLib library is not loaded.');
                     }
 
+                    // First load with PDF-Lib to check for saved state and clean the display version
+                    const tempDoc = await Lib.PDFDocument.load(arrayBuffer);
+                    const keywords = tempDoc.getKeywords() || "";
+                    
+                    // Look for our custom data in Keywords
+                    const dataPrefix = "vscode-pdf-editor-data:";
+                    if (keywords.includes(dataPrefix)) {
+                        try {
+                            const start = keywords.indexOf(dataPrefix) + dataPrefix.length;
+                            let end = keywords.indexOf(" ", start);
+                            if (end === -1) end = keywords.length;
+                            const encodedData = keywords.substring(start, end);
+                            const decodedData = atob(encodedData);
+                            const savedData = JSON.parse(decodedData);
+                            
+                            const savedAnnos = savedData.annos || savedData; // Handle old and new format
+                            // Load saved annotations into our map
+                            for (const page in savedAnnos) {
+                                annotationsMap[page] = savedAnnos[page];
+                            }
+
+                            // If it was "baked", we need to remove our background stream to get the clean PDF
+                            if (savedData.baked) {
+                                const pages = tempDoc.getPages();
+                                for (const p of pages) {
+                                    const contents = p.node.get(Lib.PDFName.of('Contents'));
+                                    if (contents instanceof Lib.PDFArray) {
+                                        // Our baked stream is always at index 0
+                                        contents.remove(0);
+                                    }
+                                }
+                            }
+                        } catch (e) { console.error("Failed to parse saved state", e); }
+                    }
+
+                    // Remove any remaining standard annotations for a clean editor view
+                    const pages = tempDoc.getPages();
+                    for (const p of pages) {
+                        try {
+                            p.node.delete(Lib.PDFName.of('Annots'));
+                        } catch (e) { console.warn("Failed to delete annots for clean view", e); }
+                    }
+                    
+                    const cleanArrayBuffer = await tempDoc.save();
+                    originalArrayBuffer = cleanArrayBuffer; 
+
                     pdfDoc = await pdfjsLib.getDocument({ 
-                        data: new Uint8Array(arrayBuffer),
+                        data: new Uint8Array(cleanArrayBuffer),
                         isEvalSupported: false 
                     }).promise;
                     
-                    pdfLibDoc = await PDFLib.PDFDocument.load(arrayBuffer);
+                    pdfLibDoc = await Lib.PDFDocument.load(cleanArrayBuffer);
                     document.getElementById('loading-msg').style.display = 'none';
                     const container = document.getElementById('pages-container'); container.innerHTML = '';
                     
                     for (let i = 1; i <= pdfDoc.numPages; i++) { 
                         createPageDOM(i, container); 
-                        annotationsMap[i] = []; 
+                        if (!annotationsMap[i]) annotationsMap[i] = []; 
                     }
 
                     const BATCH_SIZE = 3;
@@ -373,8 +474,29 @@ function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
                         await new Promise(r => setTimeout(r, 10)); 
                     }
                     
+                    // After rendering all pages, draw saved annotations onto the draw-layers
+                    for (let i = 1; i <= pdfDoc.numPages; i++) {
+                        const annos = annotationsMap[i];
+                        if (annos && annos.length > 0) {
+                            for (const a of annos) {
+                                if (a.tool === 'pen') {
+                                    for (let j = 0; j < a.points.length - 1; j++) {
+                                        drawOnCanvas(i, a.points[j].x, a.points[j].y, a.points[j+1].x, a.points[j+1].y, a.color, 'pen', a.size);
+                                    }
+                                } else {
+                                    drawOnCanvas(i, a.x, a.y, a.w, a.h, a.color, a.tool);
+                                }
+                            }
+                        }
+                    }
+                    
                     setupHighlighting();
-                } catch (err) { document.getElementById('loading-msg').innerText = 'Failed to open PDF: ' + err.message; }
+                } catch (err) { 
+                    console.error("Load error:", err);
+                    const errMsg = 'Failed to open PDF: ' + err.message;
+                    document.getElementById('loading-msg').innerText = errMsg; 
+                    vscode.postMessage({ command: 'error', text: errMsg });
+                }
             }
 
             function createPageDOM(pageNum, container) {
@@ -430,12 +552,226 @@ function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
                 return res;
             }
 
+            let isDrawing = false;
+            let currentPath = [];
+            let lastX, lastY;
+            let drawPageNum = null;
+
+            document.addEventListener('mousedown', (e) => {
+                if (currentTool !== 'pen' && currentTool !== 'eraser') return;
+                const wrapper = e.target.closest('.page-wrapper');
+                if (!wrapper) return;
+
+                isDrawing = true;
+                drawPageNum = parseInt(wrapper.id.replace('page-wrapper-', ''));
+                const rect = wrapper.getBoundingClientRect();
+                lastX = e.clientX - rect.left;
+                lastY = e.clientY - rect.top;
+
+                if (currentTool === 'pen') {
+                    currentPath = [{ x: lastX, y: lastY }];
+                } else if (currentTool === 'eraser') {
+                    handleErasing(drawPageNum, lastX, lastY);
+                }
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!isDrawing || (currentTool !== 'pen' && currentTool !== 'eraser')) return;
+                const wrapper = document.getElementById('page-wrapper-' + drawPageNum);
+                const rect = wrapper.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+
+                if (currentTool === 'pen') {
+                    drawOnCanvas(drawPageNum, lastX, lastY, x, y, currentColor, 'pen', currentPenSize);
+                    currentPath.push({ x, y });
+                } else if (currentTool === 'eraser') {
+                    handleErasing(drawPageNum, x, y);
+                }
+
+                lastX = x;
+                lastY = y;
+            });
+
+            function handleErasing(pageNum, x, y) {
+                let currentAnnos = annotationsMap[pageNum];
+                if (!currentAnnos || currentAnnos.length === 0) return;
+
+                let changed = false;
+                const eraserRadius = 8;
+                let nextAnnos = [];
+
+                for (const a of currentAnnos) {
+                    if (a.tool === 'pen') {
+                        // Brush erasing ONLY for pen drawings to keep them smooth
+                        let segments = []; let currentSegment = []; let hitInPath = false;
+                        for (let i = 0; i < a.points.length; i++) {
+                            const p = a.points[i];
+                            const dist = Math.sqrt((p.x - x) ** 2 + (p.y - y) ** 2);
+                            if (dist < eraserRadius + (a.size / 2)) {
+                                hitInPath = true; changed = true;
+                                if (currentSegment.length > 1) segments.push(currentSegment);
+                                currentSegment = [];
+                            } else {
+                                currentSegment.push(p);
+                            }
+                        }
+                        if (currentSegment.length > 1) segments.push(currentSegment);
+                        if (hitInPath) {
+                            for (const s of segments) nextAnnos.push({ ...a, points: s });
+                        } else {
+                            nextAnnos.push(a);
+                        }
+                    } else {
+                        // Highlights/Underlines/Strikes are NOT affected by the brush
+                        // They are only erased via text selection (letter-by-letter)
+                        nextAnnos.push(a);
+                    }
+                }
+
+                if (changed) {
+                    annotationsMap[pageNum] = nextAnnos;
+                    const drawCanvas = document.getElementById('draw-layer-' + pageNum);
+                    const drawCtx = drawCanvas.getContext('2d');
+                    drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+                    for (const a of nextAnnos) {
+                        if (a.tool === 'pen') {
+                            for (let i = 0; i < a.points.length - 1; i++) {
+                                drawOnCanvas(pageNum, a.points[i].x, a.points[i].y, a.points[i+1].x, a.points[i+1].y, a.color, 'pen', a.size);
+                            }
+                        } else {
+                            drawOnCanvas(pageNum, a.x, a.y, a.w, a.h, a.color, a.tool);
+                        }
+                    }
+                }
+            }
+
             function setupHighlighting() {
                 if (window.isHighlightingSetup) return;
                 window.isHighlightingSetup = true;
 
                 document.addEventListener('mouseup', () => {
                     if (dragging) return;
+
+                    const activeTool = currentTool;
+
+                    if (isDrawing) {
+                        if (activeTool === 'pen' && currentPath.length > 1) {
+                            annotationsMap[drawPageNum].push({
+                                tool: 'pen', points: currentPath, color: currentColor, size: currentPenSize
+                            });
+                        }
+                        isDrawing = false;
+                        currentPath = [];
+                        drawPageNum = null;
+                        // Don't return here if it's eraser, we still want to check for text selection
+                        if (activeTool !== 'eraser') return;
+                    }
+
+                    if (activeTool === 'eraser') {
+                        const sel = window.getSelection();
+                        if (!sel || sel.isCollapsed) return;
+
+                        const node = sel.anchorNode;
+                        if (!node || !node.parentElement) return;
+                        const textLayerEl = node.parentElement.closest('.textLayer');
+                        if (!textLayerEl) return;
+                        
+                        const pageNum = parseInt(textLayerEl.id.replace('text-layer-', ''));
+                        const wrapper = document.getElementById('page-wrapper-' + pageNum);
+                        const wrapRect = wrapper.getBoundingClientRect();
+                        const range = sel.getRangeAt(0);
+                        const rects = range.getClientRects();
+
+                        // Process and merge selection rectangles exactly like the highlighter
+                        let rawRects = [];
+                        for (const r of rects) {
+                            if (r.width < 1 || r.height < 1) continue;
+                            rawRects.push({ x: r.left - wrapRect.left, y: r.top - wrapRect.top, w: r.width, h: r.height });
+                        }
+                        
+                        let lines = [];
+                        for (let r of rawRects) {
+                            let added = false;
+                            let cy = r.y + r.h/2;
+                            for (let l of lines) {
+                                let lcy = l[0].y + l[0].h/2;
+                                if (Math.abs(cy - lcy) < (r.h / 2)) { l.push(r); added = true; break; }
+                            }
+                            if (!added) lines.push([r]);
+                        }
+                        
+                        let mergedEraserRects = [];
+                        for (let line of lines) {
+                            line.sort((a, b) => a.x - b.x);
+                            let current = line[0];
+                            for (let i = 1; i < line.length; i++) {
+                                let next = line[i];
+                                if (current.x + current.w >= next.x - 2) { 
+                                    let rightEdge = Math.max(current.x + current.w, next.x + next.w);
+                                    let bottomEdge = Math.max(current.y + current.h, next.y + next.h);
+                                    current.y = Math.min(current.y, next.y);
+                                    current.x = Math.min(current.x, next.x);
+                                    current.w = rightEdge - current.x;
+                                    current.h = bottomEdge - current.y;
+                                } else { mergedEraserRects.push(current); current = next; }
+                            }
+                            mergedEraserRects.push(current);
+                        }
+
+                        let currentAnnos = annotationsMap[pageNum] || [];
+                        let changed = false;
+
+                        for (const eraserRect of mergedEraserRects) {
+                            let nextAnnos = [];
+                            for (const a of currentAnnos) {
+                                if (a.tool === 'pen') {
+                                    let segments = []; let currentSegment = []; let hitInPath = false;
+                                    for (const p of a.points) {
+                                        const hit = (p.x >= eraserRect.x && p.x <= eraserRect.x + eraserRect.w &&
+                                                     p.y >= eraserRect.y && p.y <= eraserRect.y + eraserRect.h);
+                                        if (hit) {
+                                            hitInPath = true; changed = true;
+                                            if (currentSegment.length > 1) segments.push(currentSegment);
+                                            currentSegment = [];
+                                        } else { currentSegment.push(p); }
+                                    }
+                                    if (currentSegment.length > 1) segments.push(currentSegment);
+                                    if (hitInPath) {
+                                        for (const s of segments) nextAnnos.push({ ...a, points: s });
+                                    } else { nextAnnos.push(a); }
+                                } else {
+                                    const hit = !(eraserRect.x >= a.x + a.w || eraserRect.x + eraserRect.w <= a.x || 
+                                                  eraserRect.y >= a.y + a.h || eraserRect.y + eraserRect.h <= a.y);
+                                    if (hit) {
+                                        changed = true;
+                                        const remaining = subtractRect(a, eraserRect);
+                                        for (const rem of remaining) {
+                                            if (rem.w > 2) nextAnnos.push(rem);
+                                        }
+                                    } else { nextAnnos.push(a); }
+                                }
+                            }
+                            currentAnnos = nextAnnos;
+                        }
+
+                        if (changed) {
+                            annotationsMap[pageNum] = currentAnnos;
+                            const drawCanvas = document.getElementById('draw-layer-' + pageNum);
+                            const drawCtx = drawCanvas.getContext('2d');
+                            drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+                            for (const a of currentAnnos) {
+                                if (a.tool === 'pen') {
+                                    for (let i = 0; i < a.points.length - 1; i++) {
+                                        drawOnCanvas(pageNum, a.points[i].x, a.points[i].y, a.points[i+1].x, a.points[i+1].y, a.color, 'pen', a.size);
+                                    }
+                                } else { drawOnCanvas(pageNum, a.x, a.y, a.w, a.h, a.color, a.tool); }
+                            }
+                        }
+                        sel.removeAllRanges();
+                        return;
+                    }
+
                     const sel = window.getSelection();
                     if (!sel || sel.isCollapsed) return;
 
@@ -499,95 +835,124 @@ function getWebviewContent(pdfJsUri, pdfLibUri, pdfWorkerUri, nonce) {
                         mergedRects.push(current);
                     }
 
-                    let hasDeletedSomething = false;
-
-                    if (currentTool === 'eraser') {
-                        let currentAnnos = annotationsMap[pageNum];
-                        let changed = false;
-
-                        for (const E of mergedRects) {
-                            let nextAnnos = [];
-                            for (const A of currentAnnos) {
-                                if (E.x > A.x + A.w || E.x + E.w < A.x || E.y > A.y + A.h || E.y + E.h < A.y) {
-                                    nextAnnos.push(A);
-                                    continue;
-                                }
-
-                                const sub = subtractRect(A, E);
-                                if (sub.length !== 1 || sub[0].x !== A.x || sub[0].w !== A.w || sub[0].y !== A.y || sub[0].h !== A.h) {
-                                    changed = true;
-                                }
-                                nextAnnos.push(...sub);
-                            }
-                            currentAnnos = nextAnnos;
-                        }
-
-                        if (changed) {
-                            annotationsMap[pageNum] = currentAnnos;
-                            hasDeletedSomething = true;
-                        }
-                    } else {
-                        for (const E of mergedRects) {
-                            drawOnCanvas(pageNum, E.x, E.y, E.w, E.h, currentColor, currentTool);
-                            annotationsMap[pageNum].push({ x: E.x, y: E.y, w: E.w, h: E.h, color: currentColor, tool: currentTool });
-                        }
-                    }
-
-                    if (currentTool === 'eraser' && hasDeletedSomething) {
-                        const drawCanvas = document.getElementById('draw-layer-' + pageNum);
-                        const drawCtx = drawCanvas.getContext('2d');
-                        drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
-                        
-                        for (const a of annotationsMap[pageNum]) {
-                            drawOnCanvas(pageNum, a.x, a.y, a.w, a.h, a.color, a.tool);
-                        }
+                    for (const E of mergedRects) {
+                        drawOnCanvas(pageNum, E.x, E.y, E.w, E.h, currentColor, currentTool);
+                        annotationsMap[pageNum].push({ x: E.x, y: E.y, w: E.w, h: E.h, color: currentColor, tool: currentTool });
                     }
 
                     sel.removeAllRanges(); 
                 });
             }
 
-            function drawOnCanvas(pageNum, x, y, w, h, color, tool) {
-                const drawCtx = document.getElementById('draw-layer-' + pageNum).getContext('2d');
+            function drawOnCanvas(pageNum, x, y, x2_or_w, y2_or_h, color, tool, size) {
+                const drawCanvas = document.getElementById('draw-layer-' + pageNum);
+                const drawCtx = drawCanvas.getContext('2d');
+                
                 if (tool === 'highlight') {
-                    drawCtx.fillStyle = color; drawCtx.globalAlpha = 0.45; drawCtx.fillRect(x, y, w, h); drawCtx.globalAlpha = 1.0;
+                    drawCtx.fillStyle = color;
+                    drawCtx.globalAlpha = 1.0; // Fully opaque because it's physically behind the text now
+                    drawCtx.fillRect(x, y, x2_or_w, y2_or_h);
+                } else if (tool === 'pen') {
+                    drawCtx.strokeStyle = color;
+                    drawCtx.globalAlpha = 1.0;
+                    drawCtx.lineWidth = size || 2;
+                    drawCtx.lineCap = 'round';
+                    drawCtx.lineJoin = 'round';
+                    drawCtx.beginPath();
+                    drawCtx.moveTo(x, y);
+                    drawCtx.lineTo(x2_or_w, y2_or_h);
+                    drawCtx.stroke();
                 } else {
                     drawCtx.strokeStyle = color; drawCtx.lineWidth = 2; drawCtx.beginPath();
-                    const lineY = (tool === 'strike') ? y + h / 2 : y + h - 1;
-                    drawCtx.moveTo(x, lineY); drawCtx.lineTo(x + w, lineY); drawCtx.stroke();
+                    const lineY = (tool === 'strike') ? y + y2_or_h / 2 : y + y2_or_h - 1;
+                    drawCtx.moveTo(x, lineY); drawCtx.lineTo(x + x2_or_w, lineY); drawCtx.stroke();
                 }
+                drawCtx.globalAlpha = 1.0;
             }
 
             document.getElementById('save-btn').addEventListener('click', async () => {
-                if (!pdfLibDoc) return;
+                if (!originalArrayBuffer) return;
                 const saveBtn = document.getElementById('save-btn');
                 const originalIcon = saveBtn.innerHTML;
                 saveBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>';
                 saveBtn.disabled = true;
 
                 try {
+                    const Lib = window.PDFLib || (typeof PDFLib !== 'undefined' ? PDFLib : null);
+                    if (!Lib) throw new Error('PDFLib is not defined');
+
+                    // ALWAYS start from the original buffer to avoid double-baking
+                    const freshPdfLibDoc = await Lib.PDFDocument.load(originalArrayBuffer);
+                    const { PDFName, rgb } = Lib;
+
                     for (const pageNum of Object.keys(annotationsMap)) {
                         const pageAnnos = annotationsMap[pageNum];
                         if(pageAnnos.length === 0) continue;
                         
-                        const p = pdfLibDoc.getPage(parseInt(pageNum) - 1);
+                        const p = freshPdfLibDoc.getPage(parseInt(pageNum) - 1);
                         const { width, height } = p.getSize();
                         const canvas = document.getElementById('pdf-canvas-' + pageNum);
                         const sx = width / canvas.width; const sy = height / canvas.height;
                         
+                        // We will bake highlights and drawings into a BACKGROUND stream
+                        // This guarantees they are physically behind the PDF text
                         for (const a of pageAnnos) {
                             const c = a.color, r = parseInt(c.slice(1,3), 16)/255, g = parseInt(c.slice(3,5), 16)/255, b = parseInt(c.slice(5,7), 16)/255;
-                            if (a.tool === 'highlight') {
-                                p.drawRectangle({ x: a.x*sx, y: height-(a.y+a.h)*sy, width: a.w*sx, height: a.h*sy, color: PDFLib.rgb(r,g,b), opacity: 0.5 });
+                            const pdfColor = rgb(r, g, b);
+
+                            if (a.tool === 'pen') {
+                                for (let i = 0; i < a.points.length - 1; i++) {
+                                    p.drawLine({
+                                        start: { x: a.points[i].x * sx, y: height - a.points[i].y * sy },
+                                        end: { x: a.points[i+1].x * sx, y: height - a.points[i+1].y * sy },
+                                        thickness: (a.size || 2) * sx,
+                                        color: pdfColor,
+                                        opacity: 0.85
+                                    });
+                                }
+                            } else if (a.tool === 'highlight') {
+                                p.drawRectangle({
+                                    x: a.x * sx, y: height - (a.y + a.h) * sy,
+                                    width: a.w * sx, height: a.h * sy,
+                                    color: pdfColor,
+                                    opacity: 0.5
+                                });
                             } else {
-                                const lineY = a.tool === 'strike' ? height-(a.y+a.h/2)*sy : height-(a.y+a.h-1)*sy;
-                                p.drawLine({ start: { x: a.x*sx, y: lineY }, end: { x: (a.x+a.w)*sx, y: lineY }, thickness: 1.5, color: PDFLib.rgb(r,g,b) });
+                                const lineY = (a.tool === 'strike') ? height - (a.y + a.h/2) * sy : height - (a.y + a.h - 1) * sy;
+                                p.drawLine({
+                                    start: { x: a.x * sx, y: lineY },
+                                    end: { x: (a.x + a.w) * sx, y: lineY },
+                                    thickness: 1.5 * sx,
+                                    color: pdfColor,
+                                    opacity: 0.85
+                                });
                             }
+                        }
+
+                        // Now the magic: take the last stream (which pdf-lib just added via p.draw...)
+                        // and move it to the beginning of the Contents array.
+                        const contents = p.node.get(PDFName.of('Contents'));
+                        if (contents instanceof Lib.PDFArray) {
+                            const lastStream = contents.get(contents.size() - 1);
+                            contents.remove(contents.size() - 1);
+                            contents.insert(0, lastStream);
+                        } else if (contents) {
+                            // Single stream case, wrap it
+                            const originalStream = contents;
+                            const lastStream = p.node.context.nextRef(); // This is tricky in high-level
+                            // Actually wrapContentStreams is safer
                         }
                     }
 
-                    const pdfBytes = await pdfLibDoc.save();
-                    vscode.postMessage({ command: 'saveFile', data: pdfBytes });
+                    // Save state to metadata for reopening
+                    const stateObj = { baked: true, annos: annotationsMap };
+                    const encodedState = btoa(JSON.stringify(stateObj));
+                    freshPdfLibDoc.setKeywords(["vscode-pdf-editor-data:" + encodedState]);
+
+                    const pdfBytes = await freshPdfLibDoc.save();
+                    if (!pdfBytes || pdfBytes.length === 0) throw new Error('PDF saving returned empty data.');
+                    
+                    vscode.postMessage({ command: 'saveFile', data: Array.from(pdfBytes) });
                 } catch (err) { 
                     console.error('Save error:', err); 
                     vscode.postMessage({ command: 'error', text: 'An error occurred while saving the PDF: ' + err.message });
