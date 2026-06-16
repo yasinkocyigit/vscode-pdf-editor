@@ -27,11 +27,7 @@ A lightweight, secure, and fully offline PDF viewer and editor built specificall
 5. Click the **Save Icon** to apply your changes.
 
 ---
-▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 
-
- ⠹ Thinking... (esc to cancel, 1m 53s)                                    ? for shortcuts
-────────────────────────────────────────────────────
 ## Project Structure
 
 ```text
