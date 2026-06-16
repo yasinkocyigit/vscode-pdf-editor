@@ -1,67 +1,97 @@
-# PDF Editor
+# PDF Editor for VS Code
 
-A secure, lightweight, and offline PDF tool for Visual Studio Code. Designed primarily to view PDFs directly in a VS Code tab and highlight important sections without leaving your development environment.
+A lightweight, secure, and fully offline PDF viewer and editor built specifically for Visual Studio Code. Read, highlight, and annotate your documents without ever leaving your coding environment.
 
 ---
 
-### Why Choose PDF Editor?
-- **Zero Latency:** Extremely fast page loading and smooth scrolling.
-- **Privacy First:** Your PDFs never leave your machine.
-- **Native Experience:** Integrated perfectly into the VS Code ecosystem.
+## Key Features
 
-## Features
+- **Fast & Lightweight:** Opens PDFs instantly with smooth scrolling.
+- **Privacy Focused:** Operates 100% offline. Your files never leave your machine.
+- **Annotation Tools:**
+  - **Highlight:** Mark important text.
+  - **Underline & Strikethrough:** Standard editing tools.
+  - **Free Draw:** Draw directly on the document using the Pen tool.
+  - **Eraser:** Easily remove your annotations.
+- **In-Place Saving:** Save your changes directly back to the original file.
+- **Integrated Experience:** Feels like a native part of VS Code.
 
-* **Built for the Workspace:** Opens PDFs seamlessly in a native VS Code tab, allowing you to read and annotate side-by-side with your code.
-* **Fully Offline & Secure:** Operates entirely locally. No external API calls or internet connection required, ensuring maximum privacy for your documents.
-* **Smart Floating Toolbar:** Features a draggable and collapsible toolbar that adapts to your screen.
-* **Annotation Tools:** Core tools to highlight, underline, strikethrough, and erase text annotations.
-* **Color Palette:** Multiple color options (Yellow, Green, Pink, Red, Blue) for organizing your highlights and notes.
-* **In-Place Saving:** Directly overwrite and save your annotations to the original PDF file with a single click.
-* **High Performance:** Optimized memory management and batch rendering for smooth scrolling even on large documents.
+---
 
-## Usage
+## How to Use
 
-1. Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux, `Cmd+Shift+P` on macOS).
-2. Type and run the command: **`PDF Editor: Start`** (or `vscode-pdf-editor.startEditor`).
-3. Select a PDF file from your local file system.
-4. Use the toolbar to highlight and annotate the document.
-5. Click the save icon to apply your changes to the file.
+1. Open the **Command Palette** (`Ctrl+Shift+P` or `Cmd+Shift+P`).
+2. Run the command: **`PDF Editor: Start`**.
+3. Select the PDF file you want to edit.
+4. Use the **Floating Toolbar** to annotate your document.
+5. Click the **Save Icon** to apply your changes.
 
+---
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+
+ ⠹ Thinking... (esc to cancel, 1m 53s)                                    ? for shortcuts
+────────────────────────────────────────────────────
 ## Project Structure
 
 ```text
 vscode-pdf-editor/
-├── src/                # Source code
-│   ├── extension.js    # Extension entry point
-│   └── libs/           # PDF.js and pdf-lib libraries
-├── test/               # Extension tests
-├── .vscode/            # VS Code configuration
-├── package.json        # Extension manifest
-├── README.md           # Documentation
-└── LICENSE             # MIT License
+├── src/
+│   ├── extension.js    # Entry point & VS Code API logic
+│   └── libs/           # External libraries (pdf.js, pdf-lib)
+├── test/               # Automated tests
+├── images/             # Extension icons
+├── package.json        # Extension manifest and commands
+└── README.md           # This file
 ```
 
-## Contributing
+---
 
-1. Clone the repository.
-2. Run `npm install` to install dependencies.
-3. Press `F5` in VS Code to start debugging the extension.
-4. Make your changes and submit a pull request!
+## Development
 
-## Release Notes
+To run and modify the extension locally:
 
-### 1.0.0
-* Initial release.
-* Added core PDF viewing within a VS Code tab.
-* Added highlighting, underlining, strikethrough, and erasing capabilities.
-* Implemented secure local file saving and offline support.
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/yasinkocyigit/vscode-pdf-editor.git
+   ```
 
-## Behind the Project
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
 
-This project represents a significant milestone for me as it was my first attempt at developing VS Code extensions and working with PDF processing libraries. It was an intensive learning journey focused on integrating complex webviews into a native environment and managing local file systems securely.
+3. **Run the extension:**
+   Press `F5` in VS Code to launch an "Extension Development Host" window.
 
-I am committed to continuing the development of this tool. If you find it useful, please feel free to leave a comment or show your support. Your feedback is highly appreciated!
+4. **Experiment:**
+   Modify files inside `src/` and reload to see changes.
+
+---
+
+## Contributing & Feedback
+
+This project is open to feedback, improvements, and contributions.
+
+You can:
+- Report issues
+- Suggest new features
+- Submit pull requests
+
+All contributions are welcome.
+
+---
+
+## Contact
+
+This extension is developed by a 3rd-year Computer Engineering student.
+
+If you are interested in Artificial Intelligence, Machine Learning, or developer tools, feel free to explore my GitHub profile and connect with me:
+
+**GitHub:** [github.com/yasinkocyigit](https://github.com/yasinkocyigit)
+
+---
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is distributed under the MIT License. See `LICENSE` for more information.
